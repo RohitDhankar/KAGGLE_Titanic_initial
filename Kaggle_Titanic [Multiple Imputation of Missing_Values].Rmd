@@ -1,0 +1,260 @@
+---
+title: "Kaggle_Titanic [Multiple Imputation of Missing_Values]"
+author: "Main Source - MEGAN R SCRIPT - to be Inspired by MANY other KAGGLE Scripts - WIP "
+date: "8 January 2017"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r cars}
+
+# Load packages
+suppressMessages(library('ggplot2')) # visualization
+suppressMessages(library('ggthemes')) # visualization
+suppressMessages(library('scales')) # visualization
+suppressMessages(library('dplyr')) # data manipulation
+suppressMessages(library('mice')) # imputation
+suppressMessages(library('randomForest')) # classification algorithm
+
+train <- read.csv('train.csv', stringsAsFactors = F)
+test  <- read.csv('test.csv', stringsAsFactors = F)
+
+full  <- bind_rows(train, test) # bind training & test data
+
+# check data
+str(full)
+
+summary(train)
+# Why dont we see CABIN NA's or Missing Values in SUMMARY above 
+# We can see the same in Python code 
+# Also seen DF of R the Values are missing 
+# Also Megan in her analysis on Kaggle has suddenly declared - 2.3 Treat a few more variables …
+# to check CABIN for missing values - how does she know from Code or Summary etc of these Missing Values - In Pythin we get it from Code - 
+# CABIN Py Code - Code Cell [4] - https://github.com/RohitDhankar/KAGGLE_Titanic_initial/blob/master/Titanic_2_OwnCode.ipynb
+
+
+str(full)
+
+#
+# Grab title from passenger names
+full$Title <- gsub('(.*, )|(\\..*)', '', full$Name)
+
+# Show title counts by sex
+table(full$Sex, full$Title)
+
+# Dhankar -- No Merging of Titles Done - Hold on to the RARE Title thingie 
+#
+
+########################
+# Titles with very low cell counts to be combined to "rare" level
+# rare_title <- c('Dona', 'Lady', 'the Countess','Capt', 'Col', 'Don', 
+#                 'Dr', 'Major', 'Rev', 'Sir', 'Jonkheer')
+# 
+# # Also reassign mlle, ms, and mme accordingly
+# full$Title[full$Title == 'Mlle']        <- 'Miss' 
+# full$Title[full$Title == 'Ms']          <- 'Miss'
+# full$Title[full$Title == 'Mme']         <- 'Mrs' 
+# full$Title[full$Title %in% rare_title]  <- 'Rare Title'
+########################
+
+
+# Show title counts by sex again
+table(full$Sex, full$Title)
+
+#
+# Finally, grab surname from passenger name
+full$Surname <- sapply(full$Name,  
+                      function(x) strsplit(x, split = '[,.]')[[1]][1])
+
+#table(full$Surname, full$Sex)
+# 875 Unique Surnames 
+nlevels(factor(full$Surname))
+
+#
+# Create a family size variable including the passenger themselves
+full$Fsize <- full$SibSp + full$Parch + 1
+
+# Create a family variable 
+full$Family <- paste(full$Surname, full$Fsize, sep='_')
+
+# Use ggplot2 to visualize the relationship between family size & survival
+ggplot(full[1:891,], aes(x = Fsize, fill = factor(Survived))) +
+  geom_bar(stat='count', position='dodge') +
+  scale_x_continuous(breaks=c(1:11)) +
+  labs(x = 'Family Size') +
+  theme_few()
+
+#
+# Discretize family size
+full$FsizeD[full$Fsize == 1] <- 'singleton'
+full$FsizeD[full$Fsize < 5 & full$Fsize > 1] <- 'small'
+full$FsizeD[full$Fsize > 4] <- 'large'
+
+# Show family size by survival using a mosaic plot
+mosaicplot(table(full$FsizeD, full$Survived), main='Family Size by Survival', shade=TRUE)
+
+
+ #This CABIN variable appears to have a lot of missing values
+full$Cabin[1:28]
+
+
+# The first character is the deck. For example:
+strsplit(full$Cabin[2], NULL)[[1]]
+
+# Create a Deck variable. Get passenger deck A - F:
+full$Deck<-factor(sapply(full$Cabin, function(x) strsplit(x, NULL)[[1]][1]))
+
+full$Deck[1:10]
+# 1 to 10 Values of full$Deck with various Levels 
+
+# TBD --- 3.1 Sensible value imputation
+# Onwards 
+
+
+#full[!complete.cases(full),]
+# !complete.cases -- will give all the CASES or Observations with Data Titanic which have missing values in any Feature 
+# Too much dump 
+
+# Using package MICE 
+# Multiple imputation with MCA
+# Source URL - http://juliejosse.com/wp-content/uploads/2016/06/user2016.pdf
+# Ref URL - https://arxiv.org/pdf/1606.05333v2.pdf
+
+
+
+# Again Experimental with VIM 
+
+suppressMessages(library(mice))
+suppressMessages(library(VIM))
+suppressMessages(library(dplyr))
+
+# Source -- http://www.ats.ucla.edu/stat/r/faq/R_pmm_mi.htm
+#Checking the missing value from the data, e.g. which variable missing the most data, using library mice(a package in R)
+#md.pattern(full)
+
+#options(warnings=-1) 
+suppressMessages(md.pattern(train))
+#
+## Number of observations per patterns for all pairs of variables
+p<-md.pairs(train)
+p
+#
+suppressMessages(md.pattern(test))
+#
+pp<-md.pairs(test)
+pp
+
+#making a missing value figure or plot using library VIM(a package in R)
+NAPlot <- aggr(train, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE, labels=names(train), cex.axis=.7, gap=3, ylab=c("Histogram of missing data","Pattern"))
+#
+
+## Margin plot of 
+marginplot(train[c(1,6)], col=c("blue", "red", "orange")) # PassengerID and AGE - 177 NA's in Vector AGE 
+#
+marginplot(train[c(6,1)], col=c("blue", "red", "orange")) # PassengerID and AGE - SWAPPED -  - 177 NA's in Vector AGE & 0 NA's in PassengerID
+#
+#  Under the Missing Completely at Random (MCAR) assumption the red and blue box plots should be identical. 
+# Source -- http://www.ats.ucla.edu/stat/r/faq/R_pmm_mi.htm
+#
+# The NA's in the CABIN Feature dont seem to Show Up here ...
+marginplot(train[c(1,11)], col=c("blue", "red", "orange")) # CABIN blanks - Still Nothing ??  
+#
+#
+## distributions of missing variable by another specified variable
+## Under the Missing Completely at Random (MCAR) assumption the red and blue box plots should be identical. 
+#
+#
+#pbox(train, pos=6) # pos == Position 6 == Feature = AGE # Nothing significant seen in VIZ 
+pbox(train, pos=1) # pos == Position 1 == Feature = PassengerId 
+#pbox(train, pos=2) # pos == Position 2 == Feature = Survived # Nothing significant seen in VIZ - as Survived is a CATEGORICAL 0 - 1 Feature 
+
+#
+##by default it does 5 imputations for all missing values
+imp1 <-mice(train, m=5)
+#
+imp1
+#
+################
+### The predictor matrix tells us which variables in the dataset were used to produce predicted values for matching
+### DHANKAR - Pending Question -- How to change these VARIABLES and use another set to Predict Missing values 
+###############
+#
+imp1$imp$Age
+#
+###############
+imp1$imp
+# 
+# We see a TABLE - lets call it the "pmm" 
+# Col -1 has values 6,18,20 etc ...these are the INDEX VAlues or Serial Numbers of the OBS or ROWS 
+# ROWS have Missing Values Imputed  for AGE - these BLANKS have been Filled IN with - FIVE sets of Values 
+# Col-2,3,4,5,6 of Table "pmm" - are the Sets of values generated for Multiple Imputation . ....
+#
+# Data changed to Long Format 
+#
+imp_tot2 <- complete(imp1, 'long', inc=TRUE)
+
+# Lattice Plots 
+suppressMessages(library(lattice))
+library("lattice", lib.loc="/usr/lib/R/library")
+
+##labels observed data in blue and imputed data in red for Age
+col<-rep(c("blue", "red")[1+as.numeric(is.na(imp1$train$Age))],6)
+
+##plots data for AGE by imputation
+stripplot(Age~.imp, data=imp_tot2, jit=TRUE,col=1, xlab="imputation Number")
+
+# AGE is Feature whose Missing Values we are Imputing and Plotting 
+# .imp --- is MOST PROBABLY --- All the Features from within - "imp1$imp" 
+# data=imp_tot2 is LONG format Data created above 
+# jit=TRUE -- Jitter TRUE 
+#col=1, -- Color of Dots 
+
+# print imp1$imp ? 
+# Whats TYPE of - typeof(imp1$imp) 
+typeof(imp1$imp)
+# Whats TYPE of - typeof(imp1$imp$Age)
+typeof(imp1$imp$Age)
+#
+#imp1$imp # Ok Dont Print Not Required 
+#
+# 1st - List to DF Method ######## Fails -rbindlist gives Error - Source -SO- http://stackoverflow.com/questions/4227223/r-list-to-data-frame
+#library(data.table)
+LAge<-imp1$imp$Age
+typeof(LAge)
+#DT <- rbindlist(LAge)  # Fails -rbindlist gives Error
+#
+# 2nd - List to DF Method ######## Not as desired - - Source -SO- http://stackoverflow.com/questions/4227223/r-list-to-data-frame
+#library (plyr) 
+#dfL <- ldply (LAge, data.frame)
+#dfL
+#
+# 3rd - List to DF Method ######## Not as desired 
+#dfL1<-do.call(rbind.data.frame,LAge)
+#dfL1
+#
+# 4th - List to DF Method ######## As Desired - Source -SO- http://stackoverflow.com/questions/4227223/r-list-to-data-frame
+dfL2 <- data.frame(matrix(unlist(LAge), nrow=177, byrow=F),stringsAsFactors=FALSE)
+dfL2
+write.csv(file="Age_IMP.csv", x=dfL2)
+# Got to Python with CSV - fill in the Blanks for AGE 
+
+
+
+
+```
+
+## Work In Progress .... 
+
+```{r pressure, echo=FALSE}
+
+
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
